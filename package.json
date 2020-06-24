@@ -1,0 +1,14 @@
+{
+  "name": "osm-stats-wildcard-api",
+  "version": "1.0.0",
+  "description": "An API that fetches the osm-stats group-summary and returns the aggregated values.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "BSD-3",
+  "dependencies": {
+    "@mapbox/cloudfriend": "^2.6.0"
+  }
+}
