@@ -5,13 +5,13 @@
 const cf = require('@mapbox/cloudfriend');
 
 const Parameters = {
-    BucketName: {
-        Type :"String",
-        Description: "The name of the existing bucket where the images will be stored"
+    Certificate: {
+        Type: 'String',
+        Description: 'ARN of the SSL certificate'
     },
-    BucketPrefix: {
-        Type: "String",
-        Description: "S3 bucket prefix aka the subfolder name in cdn.hotosm.org"
+    DomainName: {
+        Type: 'String',
+        Description: 'E.g. osmstats-api.hotosm.org'
     }
 };
 
@@ -23,7 +23,7 @@ const Resources = {
     LambdaServiceRole: {
         Type: "AWS::IAM::Role",
         Properties: {
-            RoleName: "LambdaServiceRole",
+            RoleName: cf.join("-", [cf.stackName, "LambdaServiceRole"]),
             AssumeRolePolicyDocument: {
                 Version: "2012-10-17",
                 Statement: [{
@@ -36,90 +36,31 @@ const Resources = {
                 }]
             },
             ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"],
-            Policies: [{
-                PolicyName: "LambdaServiceRolePolicy",
-                PolicyDocument: {
-                    Version: "2012-10-17",
-                    Statement: [{
-                        Action: ["s3:GetBucket*","s3:GetObject*","s3:List*", "s3:Put*"],
-                        Resource: [cf.join("", ["arn:aws:s3:::", cf.ref("BucketName"), "/*"]),cf.join("", ["arn:aws:s3:::", cf.ref("BucketName")])],
-                        Effect: "Allow"
-                    }]
-                }
-            }]
+            // Policies: [{
+            //     PolicyName: "LambdaServiceRolePolicy",
+            //     PolicyDocument: {
+            //         Version: "2012-10-17",
+            //         Statement: [{
+            //             Action: ["s3:GetBucket*","s3:GetObject*","s3:List*", "s3:Put*"],
+            //             Resource: [cf.join("", ["arn:aws:s3:::", cf.ref("BucketName"), "/*"]),cf.join("", ["arn:aws:s3:::", cf.ref("BucketName")])],
+            //             Effect: "Allow"
+            //         }]
+            //     }
+            // }]
         }  //probably doesn't need editing rn
-    },
-
-
-    APIPostServiceRole: {
-        Type: "AWS::IAM::Role",
-        Properties: {
-            RoleName: "LambdaAPIServiceRole",
-            AssumeRolePolicyDocument: {
-                Version: "2012-10-17",
-                Statement: [{
-                    Sid: "",
-                    Effect: "Allow",
-                    Principal: {
-                        Service: "apigateway.amazonaws.com"
-                    },
-                    Action: "sts:AssumeRole"
-                }]
-            },
-            ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"],
-            Policies: [{
-                PolicyName: "API_Service_Role_Policy",
-                PolicyDocument: {
-                    Version: "2012-10-17",
-                    Statement: [{
-                        Action: "lambda:InvokeFunction",
-                        Resource: [{"Fn::GetAtt": ["APIPostFunction", "Arn"]}, {"Fn::GetAtt": ["APIGetFunction", "Arn"]}],
-                        Effect: "Allow"
-                    }
-                    ]
-                }
-            }]
-        }
-    },
-
-    APIPostFunction: {
-        Type: "AWS::Lambda::Function",
-        Properties: {
-            FunctionName: cf.join("-", [cf.stackName, "upload"]),
-            Description: "Function to Upload Image from S3 Bucket",
-            Code: {
-                "ZipFile": cf.join("\n", [
-                    "const AWS = require('aws-sdk');",
-                    "var s3 = new AWS.S3();exports.handler = (event, context, callback) => {",
-                    "let encodedImage =JSON.parse(event.body).image.data;",
-                    "let decodedImage = Buffer.from(encodedImage, 'base64');",
-                    cf.sub("var filePath = '${Prefix}/uploads/' + Date.now() + '_' + event.queryStringParameters.filename;", {"Prefix": cf.ref("BucketPrefix")}),
-                    cf.sub("var params = {'Body': decodedImage,'Bucket': '${BucketName}','Key': filePath};", {"BucketName": cf.ref("BucketName")}),
-                    "s3.upload(params, function(err, data){",
-                    "if(err) {callback(err, null);} else {",
-                    cf.sub("let response = {'statusCode': 200,'headers': {'my_header': 'my_value'},'body': '{\"url\": \"https://cdn.hotosm.org/' + data.Key.toString() + '\"}','isBase64Encoded': false};", {"BucketName": cf.ref("BucketName")}),
-                    "callback(null, response);}});};"
-                ])
-            },
-            Handler: "index.handler",
-            Runtime: "nodejs12.x",
-            MemorySize: 1024,
-            Role: cf.getAtt("LambdaServiceRole", "Arn"),
-            Timeout : 60
-        }
     },
 
     APIGetFunction: {
         Type: "AWS::Lambda::Function",
         Properties: {
-            FunctionName: cf.join("-", [cf.stackName, "get-image"]),
+            FunctionName: cf.join("-", [cf.stackName, "fetch-stats"]),
             Description: "Function to fetch the osm-stats group summary endpoint and return aggregated data",
             Code: {
                 "ZipFile": cf.join("\n", [
                     "exports.handler = (event, context, callback) => {",
                     "var http = require('http');",
                     "var result = {'road_count_add': 0, 'road_count_mod': 0, 'building_count_add': 0, 'building_count_mod': 0, 'waterway_count_add':0, 'poi_count_add': 0, 'poi_count_mod': 0, 'road_km_add': 0, 'road_km_mod': 0, 'waterway_km_add': 0, 'waterway_km_mod': 0, 'edits': 0, 'users': 0};",
-                    "http.get(`http://osm-stats-production-api.azurewebsites.net/group-summaries/${event.queryStringParameters.key}`',",
+                    "http.get(`http://osm-stats-production-api.azurewebsites.net/group-summaries/${event.queryStringParameters.key}`,",
                       "(res) => {",
                         "var data = '';",
                         "res.on('data', (chunk) => data += chunk);",
@@ -128,10 +69,11 @@ const Resources = {
                           "var hashtags = Object.keys(apiData);",
                           "var keys = Object.keys(result);",
                           "hashtags.map(tag => keys.map(key => result[key] += apiData[tag][key]));",
-                          "callback(null, result);",
+                          "callback(null, {statusCode: res.statusCode, body: JSON.stringify(result)});",
                         "});",
                       "}",
-                    ");"
+                    ");",
+                    "};"
                 ])
             },
             Handler: "index.handler",
@@ -145,19 +87,9 @@ const Resources = {
     RestAPI: {
         Type: "AWS::ApiGateway::RestApi",
         Properties: {
-            Description: "API to upload images to HOTOSM CDN",
-            Name: cf.sub("CDN Upload API (${AWS::StackName})"),
+            Description: "API to get fetch osm-stats and return aggregated data.",
+            Name: cf.sub("OSM Stats Wildcard API (${AWS::StackName})"),
             EndpointConfiguration: {"Types" : ["REGIONAL"]},
-            ApiKeySourceType: "HEADER"
-        }
-    },
-
-    ApiGatewayResourceUpload: {
-        Type: "AWS::ApiGateway::Resource",
-        Properties: {
-            ParentId: cf.getAtt("RestAPI", "RootResourceId"),
-            PathPart: 'upload',
-            RestApiId: cf.ref("RestAPI")
         }
     },
 
@@ -165,26 +97,7 @@ const Resources = {
         Type: "AWS::ApiGateway::Resource",
         Properties: {
             ParentId: cf.getAtt("RestAPI", "RootResourceId"),
-            PathPart: 'get-image',
-            RestApiId: cf.ref("RestAPI")
-        }
-    },
-
-    UploadApiMethod: {
-        Type: "AWS::ApiGateway::Method",
-        Properties: {
-            ApiKeyRequired: true,
-            AuthorizationType: "NONE",
-            HttpMethod: "POST",
-            Integration: {
-                ConnectionType: "INTERNET",
-                IntegrationHttpMethod: "POST",
-                TimeoutInMillis: 29000,
-                Type: "AWS_PROXY",                                              //TODO the Uri properly
-                Uri: cf.sub('arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${APIPostFunction.Arn}/invocations')
-            },
-            OperationName: 'UploadImage',
-            ResourceId: cf.ref("ApiGatewayResourceUpload"),
+            PathPart: 'wildcard',
             RestApiId: cf.ref("RestAPI")
         }
     },
@@ -192,17 +105,17 @@ const Resources = {
     GetApiMethod: {
         Type: "AWS::ApiGateway::Method",
         Properties: {
-            ApiKeyRequired: true,
+            ApiKeyRequired: false,
             AuthorizationType: "NONE",
             HttpMethod: "GET",
             Integration: {
                 ConnectionType: "INTERNET",
-                IntegrationHttpMethod: "GET",
+                IntegrationHttpMethod: "POST",
                 TimeoutInMillis: 29000,
                 Type: "AWS_PROXY",                                              //TODO the Uri properly
                 Uri: cf.sub('arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${APIGetFunction.Arn}/invocations')
             },
-            OperationName: 'UploadImage',
+            OperationName: 'GetStats',
             ResourceId: cf.ref("ApiGatewayResourceGetImage"),
             RestApiId: cf.ref("RestAPI")
         }
@@ -221,17 +134,19 @@ const Resources = {
         Type: "AWS::ApiGateway::Stage",
         Properties: {
             DeploymentId: cf.ref("ApiGatewayDeployment"),
-            Description: cf.join(" ", ["CDN Upload API Stage", cf.stackName]),
+            Description: cf.join(" ", ["OSM Stats Wildcard API", cf.stackName]),
             RestApiId: cf.ref("RestAPI"),
-            StageName: cf.stackName
+            StageName: cf.stackName,
+            CacheClusterEnabled: true,
+            CacheClusterSize: '0.5'
         }
     },
 
     ApiGatewayDeployment: {
         Type: "AWS::ApiGateway::Deployment",
-        DependsOn: ["UploadApiMethod", "GetApiMethod"],
+        DependsOn: ["GetApiMethod"],
         Properties: {
-            Description: "CDN Upload API Deployment",
+            Description: "OSM Stats Wildcard API",
             RestApiId: cf.ref("RestAPI"),
             "StageName": "DummyStage"
         }
@@ -240,7 +155,7 @@ const Resources = {
     ApiGatewayKey: {
         Type: "AWS::ApiGateway::ApiKey",
         Properties: {
-            Description: "Key for CDN Upload API",
+            Description: "Key for OSM Stats Wildcard API",
             Enabled: true,
         }
     },
@@ -252,7 +167,7 @@ const Resources = {
                 ApiId: cf.ref("RestAPI"),
                 Stage: cf.ref("ApiGatewayStage"),
             }],
-            Description: "CDN Upload Usage Plan",
+            Description: "OSM Stats Wildcard API Usage Plan",
             Throttle: {
                 RateLimit: 100,
                 BurstLimit: 25
@@ -272,27 +187,31 @@ const Resources = {
             UsagePlanId: cf.ref("ApiGatewayUsagePlan")
         }
     },
-
-    LambdaPermissionsUpload: {
-        Type: "AWS::Lambda::Permission",
+    ApiGatewayDomain: {
+        Type: "AWS::ApiGateway::DomainName",
         Properties: {
-            Action: "lambda:InvokeFunction",
-            FunctionName: cf.ref("APIPostFunction"),
-            Principal: "apigateway.amazonaws.com",
-            SourceArn: cf.join("", ["arn:aws:execute-api:", cf.region, ":", cf.accountId, ":", cf.ref("RestAPI"), "/*/POST/upload"])
+            CertificateArn: cf.arn('acm', cf.ref("Certificate")),
+            DomainName: cf.ref("DomainName")
         }
     },
-
+    ApiGatewayMapping: {
+        Type: "AWS::ApiGateway::BasePathMapping",
+        Properties: {
+            DomainName: cf.ref("ApiGatewayDomain"),
+            Stage: cf.ref("ApiGatewayStage"),
+            BasePath: "\'\'",
+            RestApiId: cf.ref("RestAPI")
+        }
+    },
     LambdaPermissionsGet: {
         Type: "AWS::Lambda::Permission",
         Properties: {
             Action: "lambda:InvokeFunction",
             FunctionName: cf.ref("APIGetFunction"),
             Principal: "apigateway.amazonaws.com",
-            SourceArn: cf.join("", ["arn:aws:execute-api:", cf.region, ":", cf.accountId, ":", cf.ref("RestAPI"), "/*/GET/get-image"])
+            SourceArn: cf.join("", ["arn:aws:execute-api:", cf.region, ":", cf.accountId, ":", cf.ref("RestAPI"), "/*/GET/wildcard"])
         }
-    },
-
+    }
 };
 
 const Outputs = {
